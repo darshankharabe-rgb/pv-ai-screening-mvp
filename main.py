@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware # Add this import
 from pydantic import BaseModel
 from dotenv import load_dotenv
+import httpx
 
 load_dotenv()
 
@@ -26,6 +27,34 @@ class ArticleRequest(BaseModel):
     drug_name: str
     title: str
     abstract: str
+
+@app.get("/search")
+async def search(query: str, limit: int = 5):
+    url = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+    params = {
+        "query": query,
+        "format": "json",
+        "resultType": "core",
+        "pageSize": limit
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+        results = []
+        for item in data.get('resultList', {}).get('result', []):
+            results.append({
+                "title": item.get('title', 'No Title'),
+                "abstract": item.get('abstractText', 'No abstract available.'),
+                "source": item.get('source', 'MED'),
+                "pmid": item.get('pmid', ''),
+            })
+        return {"results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ... (Keep your @app.post("/screen") route exactly the same below this) ...
 @app.post("/screen")

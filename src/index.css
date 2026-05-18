@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Clinical Precision Palette */
+  --color-primary: #00327d; /* Clinical Blue */
+  --color-on-primary: #ffffff;
+  --color-primary-container: #0047ab;
+  --color-on-primary-container: #a5bdff;
+  
+  --color-secondary: #006c4a; /* Emerald Green */
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #82f5c1;
+  --color-on-secondary-container: #00714e;
+
+  --color-background: #f8f9ff;
+  --color-on-background: #0b1c30;
+
+  --color-surface: #f8f9ff;
+  --color-on-surface: #0b1c30;
+  --color-on-surface-variant: #434653;
+  
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #eff4ff;
+  --color-surface-container: #e5eeff;
+  --color-surface-container-high: #dce9ff;
+  --color-surface-container-highest: #d3e4fe;
+
+  --color-outline: #737784;
+  --color-outline-variant: #c3c6d5;
+
+  /* Custom Spacing */
+  --spacing-base: 8px;
+  --spacing-gutter: 24px;
+}
+
+@layer base {
+  body {
+    @apply bg-background text-on-background font-sans antialiased;
+  }
+}
+
+.clinical-grid {
+  background-image: linear-gradient(to right, rgba(226, 232, 240, 0.3) 1px, transparent 1px), 
+                    linear-gradient(to bottom, rgba(226, 232, 240, 0.3) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Custom Typography Utility Overrides */
+.headline-xl {
+  @apply text-[36px] font-bold leading-[44px] -tracking-[0.02em];
+}
+
+.headline-lg {
+  @apply text-[28px] font-semibold leading-[36px] -tracking-[0.01em];
+}
+
+.headline-md {
+  @apply text-[20px] font-semibold leading-[28px];
+}
+
+.label-md {
+  @apply text-[12px] font-semibold leading-[16px] tracking-[0.05em] uppercase;
+}
+
+.body-lg {
+  @apply text-[16px] leading-[24px];
+}
+
+.body-md {
+  @apply text-[14px] leading-[20px];
+}
+
+.body-sm {
+  @apply text-[13px] leading-[18px];
+}
+
+.code-md {
+  @apply font-mono text-[13px] leading-[20px];
+}

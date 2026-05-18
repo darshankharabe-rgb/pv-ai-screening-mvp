@@ -1,0 +1,8 @@
+{
+  "name": "PVScreener",
+  "description": "A precision pharmacovigilance screening tool for identifying ICSRs from clinical literature abstracts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
