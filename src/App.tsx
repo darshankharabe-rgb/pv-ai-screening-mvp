@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Activity,
   Archive,
+  ArrowLeft,
+  ArrowRight,
   Check,
   ChevronRight,
   Database,
@@ -16,6 +18,7 @@ import {
   SlidersHorizontal,
   Tags,
   Target,
+  Trash2,
   Upload,
   Users,
   X,
@@ -53,6 +56,8 @@ type SearchPaper = {
   source?: string;
   pmid?: string;
 };
+
+type AppTab = 'search' | 'review' | 'archives';
 
 const fallbackPapers: ReviewPaper[] = [
   {
@@ -167,21 +172,75 @@ function mapSearchPapers(papers: SearchPaper[], result: ScreeningResult | null, 
     .sort((a, b) => b.match - a.match);
 }
 
+function loadArchivedPapers() {
+  try {
+    return JSON.parse(localStorage.getItem('pv_archived_papers') || '[]') as ReviewPaper[];
+  } catch {
+    return [];
+  }
+}
+
 export default function App() {
   const [activePage, setActivePage] = useState('dashboard');
-  const [currentTab, setCurrentTab] = useState('search');
+  const [currentTab, setCurrentTab] = useState<AppTab>('search');
   const [inputText, setInputText] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [showResults, setShowResults] = useState(false);
   const [apiResult, setApiResult] = useState<ScreeningResult | null>(null);
   const [searchPapers, setSearchPapers] = useState<ReviewPaper[]>([]);
+  const [handledIds, setHandledIds] = useState<string[]>([]);
+  const [archivedPapers, setArchivedPapers] = useState<ReviewPaper[]>(loadArchivedPapers);
+  const [acceptedCount, setAcceptedCount] = useState(0);
+  const [rejectedCount, setRejectedCount] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const reviewPapers = useMemo(
     () => searchPapers.length > 0 ? searchPapers : buildReviewPapers(apiResult, inputText),
     [apiResult, inputText, searchPapers],
   );
-  const topScore = reviewPapers[0]?.match ?? 0;
+  const queuedPapers = useMemo(
+    () => reviewPapers.filter((paper) => !handledIds.includes(paper.id) && !archivedPapers.some((archived) => archived.id === paper.id)),
+    [archivedPapers, handledIds, reviewPapers],
+  );
+  const topScore = queuedPapers[0]?.match ?? 0;
+
+  useEffect(() => {
+    localStorage.setItem('pv_archived_papers', JSON.stringify(archivedPapers));
+  }, [archivedPapers]);
+
+  useEffect(() => {
+    const syncFromHistory = () => {
+      const tab = new URLSearchParams(window.location.search).get('tab') as AppTab | null;
+      setCurrentTab(tab === 'review' || tab === 'archives' ? tab : 'search');
+    };
+    syncFromHistory();
+    window.addEventListener('popstate', syncFromHistory);
+    return () => window.removeEventListener('popstate', syncFromHistory);
+  }, []);
+
+  const navigateTo = (tab: AppTab, push = true) => {
+    setCurrentTab(tab);
+    if (push) {
+      const url = tab === 'search' ? window.location.pathname : `${window.location.pathname}?tab=${tab}`;
+      window.history.pushState({ tab }, '', url);
+    }
+  };
+
+  const completePaper = (paper: ReviewPaper, action: 'accept' | 'reject' | 'archive') => {
+    setHandledIds((ids) => ids.includes(paper.id) ? ids : [...ids, paper.id]);
+    setSearchPapers((papers) => papers.filter((item) => item.id !== paper.id));
+    if (action === 'accept') setAcceptedCount((count) => count + 1);
+    if (action === 'reject') setRejectedCount((count) => count + 1);
+    if (action === 'archive') {
+      setArchivedPapers((papers) => papers.some((item) => item.id === paper.id) ? papers : [paper, ...papers]);
+    }
+  };
+
+  const restorePaper = (paper: ReviewPaper) => {
+    setArchivedPapers((papers) => papers.filter((item) => item.id !== paper.id));
+    setHandledIds((ids) => ids.filter((id) => id !== paper.id));
+    setSearchPapers((papers) => papers.some((item) => item.id === paper.id) ? papers : [paper, ...papers].sort((a, b) => b.match - a.match));
+    navigateTo('review');
+  };
 
   const handleAnalyze = async () => {
     if (!inputText.trim()) return;
@@ -216,8 +275,8 @@ export default function App() {
 
       setApiResult(parsedVerdict);
       setSearchPapers(mapSearchPapers(papersData.results || [], parsedVerdict, inputText));
-      setCurrentTab('review');
-      setShowResults(true);
+      setHandledIds([]);
+      navigateTo('review');
     } catch (err: any) {
       setErrorMsg(err.message || 'An error occurred during analysis');
     } finally {
@@ -226,19 +285,18 @@ export default function App() {
   };
 
   const goToSearch = () => {
-    setCurrentTab('search');
-    setShowResults(false);
+    navigateTo('search');
   };
 
   return (
     <div className="flex h-screen overflow-hidden bg-background text-on-surface">
-      <Sidebar activePage={activePage} onPageChange={setActivePage} />
+      <Sidebar activePage={activePage} onPageChange={setActivePage} onNewExperiment={goToSearch} />
 
       <div className="flex-1 flex flex-col md:ml-64 h-full overflow-hidden">
-        <Header currentTab={currentTab} onTabChange={setCurrentTab} />
+        <Header currentTab={currentTab} onTabChange={(tab) => navigateTo(tab as AppTab)} />
 
         <AnimatePresence mode="wait">
-          {!showResults ? (
+          {currentTab === 'search' ? (
             <motion.main
               key="landing"
               initial={{ opacity: 0, y: 10 }}
@@ -326,6 +384,62 @@ export default function App() {
                 </div>
               </div>
             </motion.main>
+          ) : currentTab === 'archives' ? (
+            <motion.main
+              key="archives"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="flex-1 overflow-y-auto px-5 sm:px-10 py-8 bg-surface"
+            >
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between mb-5">
+                <div>
+                  <h2 className="headline-lg text-on-surface">Archives</h2>
+                  <p className="body-md text-on-surface-variant">{archivedPapers.length} stored papers available for reuse or removal.</p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => window.history.back()} className="bg-surface-container-lowest border border-outline-variant text-on-surface px-3 py-2 rounded label-md flex items-center gap-2 hover:bg-surface-container-high">
+                    <ArrowLeft className="w-4 h-4" />
+                    Back
+                  </button>
+                  <button onClick={() => window.history.forward()} className="bg-surface-container-lowest border border-outline-variant text-on-surface px-3 py-2 rounded label-md flex items-center gap-2 hover:bg-surface-container-high">
+                    <ArrowRight className="w-4 h-4" />
+                    Forward
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-4">
+                {archivedPapers.map((paper) => (
+                  <article key={paper.id} className="bg-surface-container-lowest border border-outline-variant p-4 rounded flex flex-col gap-3">
+                    <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                      <div>
+                        <h3 className="headline-md text-on-surface">{paper.title}</h3>
+                        <p className="body-sm text-on-surface-variant">{paper.journal} · {paper.authors}</p>
+                      </div>
+                      <span className="bg-surface-container-high text-on-surface border border-outline-variant label-md px-3 py-1.5 rounded">{paper.match}% Match</span>
+                    </div>
+                    <p className="body-md text-on-surface-variant line-clamp-3">{paper.abstract}</p>
+                    <div className="flex justify-end gap-2 pt-3 border-t border-surface-container-highest">
+                      <button onClick={() => restorePaper(paper)} className="bg-secondary text-on-secondary px-3 py-2 rounded label-md flex items-center gap-2 hover:bg-on-secondary-container">
+                        <Archive className="w-4 h-4" />
+                        Restore
+                      </button>
+                      <button onClick={() => setArchivedPapers((papers) => papers.filter((item) => item.id !== paper.id))} className="border border-[#ba1a1a] text-[#ba1a1a] px-3 py-2 rounded label-md flex items-center gap-2 hover:bg-[#ffdad6]">
+                        <Trash2 className="w-4 h-4" />
+                        Remove
+                      </button>
+                    </div>
+                  </article>
+                ))}
+                {archivedPapers.length === 0 && (
+                  <div className="bg-surface-container-lowest border border-outline-variant p-8 text-center rounded">
+                    <p className="headline-md text-on-surface mb-1">No archived papers yet</p>
+                    <p className="body-md text-on-surface-variant">Use the folder button on a review card to store papers here.</p>
+                  </div>
+                )}
+              </div>
+            </motion.main>
           ) : (
             <motion.main
               key="results"
@@ -344,7 +458,7 @@ export default function App() {
                     </nav>
                     <h2 className="headline-lg text-on-surface">Review Queue: Safety Signals</h2>
                     <p className="body-md text-on-surface-variant">
-                      Showing {reviewPapers.length} papers, highest confidence first.
+                      Showing {queuedPapers.length} papers, highest confidence first.
                     </p>
                   </div>
 
@@ -352,11 +466,25 @@ export default function App() {
                     <span className="bg-surface-container-highest text-primary label-md px-3 py-2 rounded border border-outline-variant">
                       Sort: Relevance
                     </span>
-                    <button className="bg-surface-container-lowest border border-outline-variant text-on-surface px-3 py-2 rounded label-md flex items-center gap-2 hover:bg-surface-container-high transition-colors">
+                    <span className="bg-surface-container-lowest border border-outline-variant text-on-surface px-3 py-2 rounded label-md">
+                      Accepted: {acceptedCount}
+                    </span>
+                    <span className="bg-surface-container-lowest border border-outline-variant text-on-surface px-3 py-2 rounded label-md">
+                      Rejected: {rejectedCount}
+                    </span>
+                    <button onClick={() => navigateTo('archives')} className="bg-surface-container-lowest border border-outline-variant text-on-surface px-3 py-2 rounded label-md flex items-center gap-2 hover:bg-surface-container-high transition-colors">
                       <Database className="w-4 h-4" />
-                      Save to DB
+                      Archives
                     </button>
-                    <button className="bg-primary text-on-primary px-3 py-2 rounded label-md flex items-center gap-2 hover:bg-primary-container transition-colors">
+                    <button onClick={() => {
+                      const blob = new Blob([JSON.stringify({ queuedPapers, archivedPapers, acceptedCount, rejectedCount }, null, 2)], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const link = document.createElement('a');
+                      link.href = url;
+                      link.download = 'pv-review-queue.json';
+                      link.click();
+                      URL.revokeObjectURL(url);
+                    }} className="bg-primary text-on-primary px-3 py-2 rounded label-md flex items-center gap-2 hover:bg-primary-container transition-colors">
                       <FileText className="w-4 h-4" />
                       Export
                     </button>
@@ -376,7 +504,7 @@ export default function App() {
                 )}
 
                 <div className="flex flex-col gap-4">
-                  {reviewPapers.map((paper) => (
+                  {queuedPapers.map((paper) => (
                     <article
                       key={paper.id}
                       className="bg-surface-container-lowest border border-outline-variant p-4 flex flex-col gap-3 hover:bg-surface-bright transition-colors"
@@ -421,19 +549,25 @@ export default function App() {
                           ))}
                         </div>
                         <div className="flex gap-2">
-                          <button className="w-10 h-10 flex items-center justify-center border border-outline-variant rounded text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface transition-colors" title="Archive for later">
+                          <button onClick={() => completePaper(paper, 'archive')} className="w-10 h-10 flex items-center justify-center border border-outline-variant rounded text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface transition-colors" title="Archive for later">
                             <Folder className="w-4 h-4" />
                           </button>
-                          <button className="w-10 h-10 flex items-center justify-center border border-[#ba1a1a] text-[#ba1a1a] rounded hover:bg-[#ffdad6] hover:text-[#93000a] transition-colors" title="Reject as irrelevant">
+                          <button onClick={() => completePaper(paper, 'reject')} className="w-10 h-10 flex items-center justify-center border border-[#ba1a1a] text-[#ba1a1a] rounded hover:bg-[#ffdad6] hover:text-[#93000a] transition-colors" title="Reject as irrelevant">
                             <X className="w-4 h-4" />
                           </button>
-                          <button className="w-10 h-10 flex items-center justify-center bg-secondary text-on-secondary rounded hover:bg-on-secondary-container transition-colors shadow-sm" title="Accept and extract data">
+                          <button onClick={() => completePaper(paper, 'accept')} className="w-10 h-10 flex items-center justify-center bg-secondary text-on-secondary rounded hover:bg-on-secondary-container transition-colors shadow-sm" title="Accept and extract data">
                             <Check className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
                     </article>
                   ))}
+                  {queuedPapers.length === 0 && (
+                    <div className="bg-surface-container-lowest border border-outline-variant p-8 text-center rounded">
+                      <p className="headline-md text-on-surface mb-1">Review queue cleared</p>
+                      <p className="body-md text-on-surface-variant">Accepted, rejected, or archived papers are no longer in the active queue.</p>
+                    </div>
+                  )}
                 </div>
               </section>
 
@@ -441,7 +575,7 @@ export default function App() {
                 <div className="p-6 border-b border-outline-variant">
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="headline-md text-on-surface">Active Parameters</h3>
-                    <button className="text-primary hover:text-primary-container label-md">Reset</button>
+                    <button onClick={() => setHandledIds([])} className="text-primary hover:text-primary-container label-md">Reset</button>
                   </div>
 
                   <div className="bg-surface-container-lowest border border-outline-variant p-3 rounded mb-4">
@@ -503,7 +637,7 @@ export default function App() {
                 </div>
 
                 <div className="p-6 border-t border-outline-variant bg-surface-container-lowest mt-auto">
-                  <button className="w-full bg-surface border border-outline text-on-surface label-md py-2 px-3 rounded hover:bg-surface-container-highest transition-colors flex items-center justify-center gap-2">
+                  <button onClick={() => setSearchPapers((papers) => [...papers].sort((a, b) => b.match - a.match))} className="w-full bg-surface border border-outline text-on-surface label-md py-2 px-3 rounded hover:bg-surface-container-highest transition-colors flex items-center justify-center gap-2">
                     <Archive className="w-4 h-4" />
                     Apply Filters
                   </button>

@@ -6,16 +6,15 @@ import {
   LifeBuoy, 
   History,
   PlusCircle,
-  Search
 } from 'lucide-react';
-import { motion } from 'motion/react';
 
 interface SidebarProps {
   activePage: string;
   onPageChange: (page: string) => void;
+  onNewExperiment: () => void;
 }
 
-export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
+export default function Sidebar({ activePage, onPageChange, onNewExperiment }: SidebarProps) {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'active-runs', label: 'Active Runs', icon: FlaskConical },
@@ -35,7 +34,7 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
         <p className="body-sm text-on-surface-variant">Drug Discovery Unit</p>
       </div>
 
-      <button className="w-full mb-6 bg-primary text-on-primary label-md py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 hover:bg-primary-container transition-all shadow-sm">
+      <button onClick={onNewExperiment} className="w-full mb-6 bg-primary text-on-primary label-md py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 hover:bg-primary-container transition-all shadow-sm">
         <PlusCircle className="w-4 h-4" />
         New Experiment
       </button>
