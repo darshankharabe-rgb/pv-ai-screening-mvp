@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Activity,
+  AlertCircle,
   Archive,
   ArrowLeft,
   ArrowRight,
   Check,
   ChevronRight,
+  ClipboardCheck,
   Database,
   FileSearch,
   FileText,
@@ -25,6 +27,8 @@ import {
 } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 
 type ScreeningResult = {
   verdict?: 'RELEVANT' | 'NOT_RELEVANT' | 'UNCERTAIN' | string;
@@ -180,6 +184,10 @@ function loadArchivedPapers() {
   }
 }
 
+function apiUrl(path: string) {
+  return `${API_BASE_URL}${path}`;
+}
+
 export default function App() {
   const [activePage, setActivePage] = useState('dashboard');
   const [currentTab, setCurrentTab] = useState<AppTab>('search');
@@ -218,6 +226,7 @@ export default function App() {
   }, []);
 
   const navigateTo = (tab: AppTab, push = true) => {
+    setActivePage('dashboard');
     setCurrentTab(tab);
     if (push) {
       const url = tab === 'search' ? window.location.pathname : `${window.location.pathname}?tab=${tab}`;
@@ -248,7 +257,7 @@ export default function App() {
     setErrorMsg(null);
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/screen', {
+      const response = await fetch(apiUrl('/screen'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -270,7 +279,7 @@ export default function App() {
         parsedVerdict.entities?.adverse_event,
         inputText.split(/\s+/).slice(0, 12).join(' '),
       ].filter(Boolean).join(' ');
-      const papersResponse = await fetch(`http://127.0.0.1:8000/search?query=${encodeURIComponent(query)}&limit=120`);
+      const papersResponse = await fetch(apiUrl(`/search?query=${encodeURIComponent(query)}&limit=120`));
       const papersData = papersResponse.ok ? await papersResponse.json() : { results: [] };
 
       setApiResult(parsedVerdict);
@@ -278,7 +287,10 @@ export default function App() {
       setHandledIds([]);
       navigateTo('review');
     } catch (err: any) {
-      setErrorMsg(err.message || 'An error occurred during analysis');
+      const deployHint = API_BASE_URL.includes('127.0.0.1')
+        ? ' Backend is still set to localhost. For Vercel, set VITE_API_BASE_URL to your deployed FastAPI URL.'
+        : '';
+      setErrorMsg(`${err.message || 'An error occurred during analysis'}.${deployHint}`);
     } finally {
       setIsAnalyzing(false);
     }
@@ -296,7 +308,37 @@ export default function App() {
         <Header currentTab={currentTab} onTabChange={(tab) => navigateTo(tab as AppTab)} />
 
         <AnimatePresence mode="wait">
-          {currentTab === 'search' ? (
+          {activePage !== 'dashboard' ? (
+            <motion.main
+              key={activePage}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="flex-1 overflow-y-auto px-5 sm:px-10 py-8 bg-surface"
+            >
+              <div className="max-w-5xl">
+                <button onClick={() => setActivePage('dashboard')} className="mb-5 text-primary label-md flex items-center gap-2 hover:text-primary-container">
+                  <ArrowLeft className="w-4 h-4" />
+                  Dashboard
+                </button>
+                <div className="bg-surface-container-lowest border border-outline-variant rounded p-6">
+                  <div className="flex items-start gap-4">
+                    <div className="bg-surface-container-high text-primary p-3 rounded">
+                      <ClipboardCheck className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h2 className="headline-lg text-on-surface mb-2">
+                        {activePage === 'active-runs' ? 'Active Runs' : activePage === 'database' ? 'Database' : activePage === 'settings' ? 'Settings' : activePage === 'support' ? 'Support' : 'System Logs'}
+                      </h2>
+                      <p className="body-md text-on-surface-variant max-w-2xl">
+                        This workspace section is connected and ready for the next workflow. The screening dashboard remains the primary production surface for search, review, archive, and export.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.main>
+          ) : currentTab === 'search' ? (
             <motion.main
               key="landing"
               initial={{ opacity: 0, y: 10 }}
@@ -337,8 +379,9 @@ export default function App() {
                   </div>
 
                   {errorMsg && (
-                    <div className="mt-4 p-3 bg-[#ffdad6] text-[#93000a] rounded-lg body-sm font-medium">
-                      Error: {errorMsg}
+                    <div className="mt-4 p-3 bg-[#ffdad6] text-[#93000a] rounded-lg body-sm font-medium flex gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>{errorMsg}</span>
                     </div>
                   )}
 
@@ -351,7 +394,7 @@ export default function App() {
                       {isAnalyzing ? (
                         <>
                           <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                          Searching...
+                          Screening literature...
                         </>
                       ) : (
                         <>
