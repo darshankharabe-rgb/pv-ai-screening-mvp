@@ -14,17 +14,19 @@ export default function Header({ currentTab, onTabChange }: HeaderProps) {
 
   return (
     <header className="bg-surface-container-lowest border-b border-outline-variant sticky top-0 z-10">
-      <div className="flex justify-between items-center w-full px-6 py-3 max-w-[1440px] mx-auto">
+      <div className="flex flex-col gap-3 md:flex-row md:justify-between md:items-center w-full px-4 sm:px-6 py-3 max-w-[1440px] mx-auto">
         <div className="md:hidden">
-          <h1 className="headline-md font-bold text-primary">PVScreener</h1>
+          <h1 className="headline-md font-bold text-primary">PV Screener</h1>
         </div>
         
-        <nav className="hidden md:flex space-x-8">
+        <nav className="flex gap-2 sm:gap-6 overflow-x-auto">
           {tabs.map((tab) => (
             <button
+              type="button"
               key={tab.id}
               onClick={() => onTabChange(tab.id)}
-              className={`body-md transition-all pb-2 px-1 relative ${
+              aria-current={currentTab === tab.id ? 'page' : undefined}
+              className={`body-md whitespace-nowrap transition-all pb-2 px-1 relative ${
                 currentTab === tab.id
                   ? 'text-primary font-medium'
                   : 'text-on-surface-variant hover:text-primary'
@@ -39,10 +41,10 @@ export default function Header({ currentTab, onTabChange }: HeaderProps) {
         </nav>
 
         <div className="flex items-center gap-4 text-on-surface-variant">
-          <button className="hover:text-primary transition-colors p-1.5 rounded-full hover:bg-surface-container">
+          <button type="button" aria-label="Notifications" title="Notifications" className="hover:text-primary transition-colors p-1.5 rounded-full hover:bg-surface-container">
             <Bell className="w-5 h-5" />
           </button>
-          <button className="hover:text-primary transition-colors p-1.5 rounded-full hover:bg-surface-container">
+          <button type="button" aria-label="Account" title="Account" className="hover:text-primary transition-colors p-1.5 rounded-full hover:bg-surface-container">
             <User className="w-5 h-5" />
           </button>
         </div>

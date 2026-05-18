@@ -30,11 +30,11 @@ export default function Sidebar({ activePage, onPageChange, onNewExperiment }: S
   return (
     <nav className="hidden md:flex flex-col h-screen w-64 fixed left-0 top-0 bg-surface-container-low border-r border-outline-variant p-4">
       <div className="mb-10 px-2">
-        <h1 className="headline-md text-primary tracking-tight">Proof_Of_Concept</h1>
-        <p className="body-sm text-on-surface-variant">Drug Discovery Unit</p>
+        <h1 className="headline-md text-primary tracking-normal">PV Screener</h1>
+        <p className="body-sm text-on-surface-variant">Literature Safety Review</p>
       </div>
 
-      <button onClick={onNewExperiment} className="w-full mb-6 bg-primary text-on-primary label-md py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 hover:bg-primary-container transition-all shadow-sm">
+      <button type="button" onClick={onNewExperiment} className="w-full mb-6 bg-primary text-on-primary label-md py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 hover:bg-primary-container transition-all shadow-sm">
         <PlusCircle className="w-4 h-4" />
         New Experiment
       </button>
@@ -43,6 +43,7 @@ export default function Sidebar({ activePage, onPageChange, onNewExperiment }: S
         {navItems.map((item) => (
           <li key={item.id}>
             <button
+              type="button"
               onClick={() => onPageChange(item.id)}
               className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg label-md transition-all ${
                 activePage === item.id
@@ -60,8 +61,14 @@ export default function Sidebar({ activePage, onPageChange, onNewExperiment }: S
       <div className="mt-auto space-y-1.5 pt-4 border-t border-outline-variant">
         {bottomItems.map((item) => (
           <button
+            type="button"
             key={item.id}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg label-md text-on-surface-variant hover:bg-surface-container-high transition-all"
+            onClick={() => onPageChange(item.id)}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg label-md transition-all ${
+              activePage === item.id
+                ? 'bg-secondary-container text-on-secondary-container'
+                : 'text-on-surface-variant hover:bg-surface-container-high'
+            }`}
           >
             <item.icon className="w-5 h-5" />
             {item.label}

@@ -18,3 +18,7 @@ View your app in AI Studio: https://ai.studio/apps/ea6c0b32-44d0-4690-bacd-91fb7
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Deploy on Vercel
+
+Set `VITE_API_BASE_URL` in Vercel to the public URL of your deployed FastAPI backend. The frontend falls back to `http://127.0.0.1:8000` only for local development.
