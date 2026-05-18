@@ -21,4 +21,25 @@ View your app in AI Studio: https://ai.studio/apps/ea6c0b32-44d0-4690-bacd-91fb7
 
 ## Deploy on Vercel
 
-Set `VITE_API_BASE_URL` in Vercel to the public URL of your deployed FastAPI backend. The frontend falls back to `http://127.0.0.1:8000` only for local development.
+Deploy this as two Vercel projects from the same GitHub repo.
+
+### Backend project
+
+1. Import the repo in Vercel.
+2. Set **Root Directory** to `backend`.
+3. Add environment variables:
+   - `GEMINI_API_KEY`: your Gemini key
+   - `ALLOWED_ORIGINS`: your frontend Vercel URL, or `*` while testing
+4. Deploy. The backend exposes:
+   - `GET /`
+   - `GET /search`
+   - `POST /screen`
+
+### Frontend project
+
+1. Import the same repo in Vercel.
+2. Keep **Root Directory** as the repo root.
+3. Framework preset should be **Vite**.
+4. Add environment variable:
+   - `VITE_API_BASE_URL`: the deployed backend URL from the backend project
+5. Deploy or redeploy after setting the variable.
