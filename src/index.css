@@ -1,6 +1,6 @@
-@import "tailwindcss";
-
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
@@ -52,11 +52,11 @@
 
 /* Custom Typography Utility Overrides */
 .headline-xl {
-  @apply text-[36px] font-bold leading-[44px] -tracking-[0.02em];
+  @apply text-[36px] font-bold leading-[44px] tracking-normal;
 }
 
 .headline-lg {
-  @apply text-[28px] font-semibold leading-[36px] -tracking-[0.01em];
+  @apply text-[28px] font-semibold leading-[36px] tracking-normal;
 }
 
 .headline-md {
