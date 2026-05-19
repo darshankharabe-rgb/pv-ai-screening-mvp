@@ -52,6 +52,13 @@ type ReviewPaper = {
   abstract: string;
   tags: Array<{ icon: typeof Microscope; label: string }>;
   priority: 'high' | 'medium' | 'low';
+  confidenceLevel?: 'HIGH' | 'MEDIUM' | 'LOW' | 'REJECT';
+  drugMatchLevel?: string;
+  eventMatchLevel?: string;
+  couplingStrength?: 'STRONG' | 'MEDIUM' | 'WEAK' | 'NONE';
+  causalityStrength?: 'EXPLICIT' | 'IMPLIED' | 'NONE';
+  centrality?: 'CENTRAL' | 'NON-CENTRAL';
+  finalDecision?: 'INCLUDE' | 'EXCLUDE';
 };
 
 type SearchPaper = {
@@ -138,39 +145,148 @@ function buildReviewPapers(result: ScreeningResult | null, inputText: string): R
 }
 
 function scorePaper(paper: SearchPaper, index: number, result: ScreeningResult | null) {
-  const haystack = `${paper.title || ''} ${paper.abstract || ''}`.toLowerCase();
-  const entities = [
-    result?.entities?.drug,
-    result?.entities?.adverse_event,
-    'adverse',
-    'patient',
-    'case',
-    'reaction',
-    'safety',
-  ].filter(Boolean) as string[];
-  const hits = entities.reduce((sum, term) => sum + (haystack.includes(term.toLowerCase()) ? 1 : 0), 0);
-  const base = Math.round(((result?.confidence ?? 0.72) > 1 ? result?.confidence ?? 72 : (result?.confidence ?? 0.72) * 100));
-  return Math.max(50, Math.min(99, base + hits * 4 - Math.floor(index / 8)));
+  const title = (paper.title || '').toLowerCase();
+  const abstract = (paper.abstract || '').toLowerCase();
+  const text = `${title} ${abstract}`;
+  
+  const drug = (result?.entities?.drug || '').toLowerCase();
+  const event = (result?.entities?.adverse_event || '').toLowerCase();
+  
+  // 1. DRUG MATCH (Max 100%)
+  let drugScore = 0;
+  let drugMatchLevel = '0%';
+  if (drug && text.includes(drug)) { drugScore = 100; drugMatchLevel = '100% (Exact)'; }
+  else if (drug && drug.split(' ').some(d => d.length > 4 && text.includes(d))) { drugScore = 60; drugMatchLevel = '60% (Class)'; }
+  else { drugMatchLevel = '0% (Unrelated)'; }
+  
+  // 2. EVENT MATCH (Max 100%)
+  let eventScore = 0;
+  let eventMatchLevel = '0%';
+  if (event && text.includes(event)) { eventScore = 100; eventMatchLevel = '100% (Exact)'; }
+  else if (event && event.split(' ').some(e => e.length > 4 && text.includes(e))) { eventScore = 80; eventMatchLevel = '80% (Syndrome)'; }
+  else if (text.includes('adverse') || text.includes('toxicity') || text.includes('reaction')) { eventScore = 40; eventMatchLevel = '40% (System)'; }
+  else { eventMatchLevel = '10% (Broad)'; eventScore = 10; }
+  
+  // 3. DRUG-EVENT COUPLING (Max 100%)
+  const sentences = text.split('. ');
+  const sameSentence = sentences.some(s => drug && event && s.includes(drug) && s.includes(event));
+  const causalLink = sentences.some(s => drug && event && s.includes(drug) && s.includes(event) && (s.includes('induced') || s.includes('caused by') || s.includes('associated with') || s.includes('secondary to') || s.includes('attributed to')));
+  const caseDesc = text.includes('case report') || text.includes('case series') || text.includes('-year-old');
+  
+  let couplingStrength: 'STRONG' | 'MEDIUM' | 'WEAK' | 'NONE' = 'NONE';
+  let couplingScore = 0;
+  
+  const bothPresent = drugScore > 0 && eventScore > 0;
+  const bothCentral = drug && event && title.includes(drug) && title.includes(event);
+  
+  if (bothPresent && (causalLink || caseDesc)) { 
+      couplingStrength = 'STRONG'; 
+      couplingScore = 100; 
+  } else if (bothPresent && (bothCentral || sameSentence)) { 
+      couplingStrength = 'MEDIUM'; 
+      couplingScore = 75; 
+  } else if (bothPresent) { 
+      couplingStrength = 'WEAK'; 
+      couplingScore = 40; 
+  }
+  
+  // 4. CAUSALITY STRENGTH (Max 100%)
+  const strongCausalityKeywords = ['caused by', 'induced by', 'attributed to', 'dechallenge', 'rechallenge', 'biopsy confirmed', 'probable culprit'];
+  const impliedCausalityKeywords = ['associated with', 'suspected', 'possible', 'related to', 'induced'];
+  
+  let causalityStrength: 'EXPLICIT' | 'IMPLIED' | 'NONE' = 'NONE';
+  let causalityScore = 0;
+  if (strongCausalityKeywords.some(kw => text.includes(kw))) { causalityStrength = 'EXPLICIT'; causalityScore = 100; }
+  else if (impliedCausalityKeywords.some(kw => text.includes(kw))) { causalityStrength = 'IMPLIED'; causalityScore = 50; }
+  
+  // 6. CENTRALITY RULE
+  let centrality: 'CENTRAL' | 'NON-CENTRAL' = 'NON-CENTRAL';
+  if ((drug && title.includes(drug)) || (event && title.includes(event)) || title.includes('case report') || title.includes('induced')) {
+    centrality = 'CENTRAL';
+  }
+  
+  // 7. PENALTY RULES
+  let penalties = 0;
+  const incidentalKeywords = ['background', 'rarely', 'can cause', 'previously reported'];
+  if (incidentalKeywords.some(kw => text.includes(kw))) penalties += 50;
+  
+  const reviewKeywords = ['review', 'meta-analysis', 'overview', 'systematic review'];
+  if (reviewKeywords.some(kw => title.includes(kw))) penalties += 40;
+  
+  if (drugScore === 0) penalties += 60;
+  if (eventScore <= 10) penalties += 50;
+  
+  // Relaxed penalty: don't heavily penalize missing causality if it's a central known toxicity summary
+  if (causalityStrength === 'NONE' && centrality === 'NON-CENTRAL') penalties += 30;
+  else if (causalityStrength === 'NONE') penalties += 10;
+  
+  // FINAL SCORING LOGIC
+  let rawScore = (drugScore * 0.35) + (eventScore * 0.35) + (couplingScore * 0.20) + (causalityScore * 0.10);
+  let finalScore = rawScore - penalties;
+  
+  // 8. REJECTION RULE
+  let confidenceLevel: 'HIGH' | 'MEDIUM' | 'LOW' | 'REJECT' = 'MEDIUM';
+  let finalDecision: 'INCLUDE' | 'EXCLUDE' = 'INCLUDE';
+  
+  // Relaxed Rejection: Only reject if coupling is NONE *and* it's non-central, OR completely irrelevant
+  const failsCouplingAndCentrality = (couplingStrength === 'NONE' && centrality === 'NON-CENTRAL');
+  
+  if (failsCouplingAndCentrality || finalScore < 30) {
+    confidenceLevel = 'REJECT';
+    finalDecision = 'EXCLUDE';
+  } else if (finalScore >= 70 || (couplingStrength === 'STRONG' && centrality === 'CENTRAL')) {
+    confidenceLevel = 'HIGH';
+  } else if (finalScore >= 45 || couplingStrength === 'MEDIUM' || couplingStrength === 'STRONG') {
+    confidenceLevel = 'MEDIUM';
+  } else {
+    confidenceLevel = 'LOW';
+  }
+
+  const tieBreaker = Math.max(0, 5 - Math.floor(index / 5));
+
+  return {
+    score: Math.max(0, Math.min(99, Math.round(finalScore) + tieBreaker)),
+    drugMatchLevel,
+    eventMatchLevel,
+    couplingStrength,
+    causalityStrength,
+    centrality,
+    confidenceLevel,
+    finalDecision
+  };
 }
 
 function mapSearchPapers(papers: SearchPaper[], result: ScreeningResult | null, inputText: string): ReviewPaper[] {
   return papers
     .map((paper, index) => {
-      const match = scorePaper(paper, index, result);
+      const details = scorePaper(paper, index, result);
+      
+      let matchNote = details.confidenceLevel === 'HIGH' ? 'High causality confidence' 
+        : details.confidenceLevel === 'MEDIUM' ? 'Probable safety signal'
+        : details.confidenceLevel === 'LOW' ? 'Incidental or background mention'
+        : 'Rejected / Excluded';
+      
       return {
         id: paper.pmid || `paper-${index}`,
         title: paper.title || 'Untitled paper',
         journal: paper.source || 'Europe PMC',
         published: 'Indexed result',
         authors: paper.pmid ? `PMID: ${paper.pmid}` : 'Metadata unavailable',
-        match,
-        matchNote: match >= 90 ? 'High confidence match' : match >= 75 ? 'Relevant safety signal' : 'Lower confidence match',
+        match: details.score,
+        matchNote,
         abstract: paper.abstract || 'No abstract available.',
         tags: [
-          { icon: ShieldCheck, label: result?.verdict ? cleanVerdict(result.verdict) : 'Screening Match' },
+          { icon: ShieldCheck, label: details.finalDecision },
           { icon: Activity, label: result?.entities?.adverse_event || 'Safety Signal' },
         ],
-        priority: match >= 90 ? 'high' : match >= 75 ? 'medium' : 'low',
+        priority: details.confidenceLevel === 'HIGH' ? 'high' : details.confidenceLevel === 'MEDIUM' ? 'medium' : 'low',
+        confidenceLevel: details.confidenceLevel,
+        drugMatchLevel: details.drugMatchLevel,
+        eventMatchLevel: details.eventMatchLevel,
+        couplingStrength: details.couplingStrength,
+        causalityStrength: details.causalityStrength,
+        centrality: details.centrality,
+        finalDecision: details.finalDecision,
       } satisfies ReviewPaper;
     })
     .sort((a, b) => b.match - a.match);
@@ -268,7 +384,8 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to connect to the backend API');
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Failed to connect to the backend API');
       }
 
       const data = await response.json();
@@ -554,7 +671,15 @@ export default function App() {
                     >
                       <div className="flex flex-col gap-3 xl:flex-row xl:justify-between xl:items-start">
                         <div className="min-w-0 flex-1">
-                          <h3 className="headline-md text-on-surface mb-1 leading-tight">{paper.title}</h3>
+                          <h3 className="headline-md mb-1 leading-tight">
+                            {paper.id.match(/^\d+$/) ? (
+                              <a href={`https://pubmed.ncbi.nlm.nih.gov/${paper.id}/`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                                {paper.title}
+                              </a>
+                            ) : (
+                              <span className="text-on-surface">{paper.title}</span>
+                            )}
+                          </h3>
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2">
                             <span className="label-md text-primary">{paper.journal}</span>
                             <span className="body-sm text-on-surface-variant">Published: {paper.published}</span>
@@ -576,6 +701,18 @@ export default function App() {
                           <span className="body-sm text-on-surface-variant">{paper.matchNote}</span>
                         </div>
                       </div>
+
+                      {(paper.confidenceLevel || paper.drugMatchLevel) && (
+                        <div className="bg-surface-container py-2 px-3 rounded text-xs flex flex-wrap gap-x-4 gap-y-2 mt-1 mb-2 border border-outline-variant">
+                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Confidence:</span> <span className={paper.confidenceLevel === 'HIGH' ? 'text-primary font-bold' : paper.confidenceLevel === 'REJECT' ? 'text-[#ba1a1a] font-bold' : 'text-on-surface'}>{paper.confidenceLevel}</span></div>
+                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Drug Match:</span> <span className="text-on-surface">{paper.drugMatchLevel}</span></div>
+                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Event Match:</span> <span className="text-on-surface">{paper.eventMatchLevel}</span></div>
+                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Coupling:</span> <span className="text-on-surface">{paper.couplingStrength}</span></div>
+                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Causality:</span> <span className="text-on-surface">{paper.causalityStrength}</span></div>
+                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Centrality:</span> <span className="text-on-surface">{paper.centrality}</span></div>
+                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Decision:</span> <span className={paper.finalDecision === 'INCLUDE' ? 'text-[#146c2e] font-bold' : 'text-[#ba1a1a] font-bold'}>{paper.finalDecision}</span></div>
+                        </div>
+                      )}
 
                       <p className="body-md text-on-surface-variant line-clamp-3">{paper.abstract}</p>
 
