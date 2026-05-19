@@ -146,11 +146,81 @@ function buildReviewPapers(result: ScreeningResult | null, inputText: string): R
 
 function scorePaper(paper: SearchPaper, index: number, result: ScreeningResult | null) {
   const title = (paper.title || '').toLowerCase();
-  const abstract = (paper.abstract || '').toLowerCase();
-  const text = `${title} ${abstract}`;
+  const isAbstractMissing = !paper.abstract || 
+                            paper.abstract.trim() === '' || 
+                            paper.abstract.toLowerCase().includes('no abstract available');
+  const abstract = isAbstractMissing ? '' : paper.abstract.toLowerCase();
+  const text = `${title} ${abstract}`.trim();
   
   const drug = (result?.entities?.drug || '').toLowerCase();
   const event = (result?.entities?.adverse_event || '').toLowerCase();
+
+  // Hard Filters
+  const titleHasCaseNarrative = 
+    title.includes('case report') || 
+    title.includes('case series') || 
+    title.includes('case study') || 
+    title.includes('patient') || 
+    title.includes('developed') || 
+    title.includes('induced') || 
+    title.includes('toxicity') ||
+    title.includes('-year-old') ||
+    title.includes('years old') ||
+    /\b(male|female|man|woman|boy|girl|infant|neonate|patient|adverse|reaction|presentation|admitted|discontinued)\b/.test(title);
+
+  // Check patient narrative in full text
+  const hasAgeGender = /\b\d+-year-old\b/.test(text) || 
+                       /\baged \d+\b/.test(text) ||
+                       /\b\d+\s*years?\s*old\b/.test(text) ||
+                       (/\b(male|female|man|woman|boy|girl|infant|neonate|patient)\b/.test(text) && /\b\d+\b/.test(text));
+                       
+  const patientNarrativeKeywords = [
+    'developed',
+    'after receiving',
+    'after initiation of',
+    'was admitted',
+    'drug discontinued',
+    'improved after withdrawal',
+    'presented with',
+    'admitted to',
+    'initiated on',
+    'started on',
+    'discontinued'
+  ];
+  
+  const hasPatientNarrative = hasAgeGender || patientNarrativeKeywords.some(kw => text.includes(kw));
+
+  const autoExcludeKeywords = [
+    'conference abstracts',
+    'annual meeting',
+    'poster session',
+    'oral presentations',
+    'proceedings',
+    'supplement issue',
+    'abstracts from the'
+  ];
+  
+  const hasAutoExcludeKeywords = autoExcludeKeywords.some(kw => text.includes(kw));
+
+  let shouldAutoExclude = false;
+  if (isAbstractMissing && !titleHasCaseNarrative) {
+    shouldAutoExclude = true;
+  } else if (hasAutoExcludeKeywords && !hasPatientNarrative) {
+    shouldAutoExclude = true;
+  }
+
+  if (shouldAutoExclude) {
+    return {
+      score: 0,
+      drugMatchLevel: drug && text.includes(drug) ? '100% (Exact)' : '0% (Unrelated)',
+      eventMatchLevel: isAbstractMissing ? '0% (No Abstract)' : '0% (Excluded)',
+      couplingStrength: 'NONE' as const,
+      causalityStrength: 'NONE' as const,
+      centrality: 'NON-CENTRAL' as const,
+      confidenceLevel: 'REJECT' as const,
+      finalDecision: 'EXCLUDE' as const,
+    };
+  }
   
   // 1. DRUG MATCH (Max 100%)
   let drugScore = 0;
@@ -165,6 +235,7 @@ function scorePaper(paper: SearchPaper, index: number, result: ScreeningResult |
   if (event && text.includes(event)) { eventScore = 100; eventMatchLevel = '100% (Exact)'; }
   else if (event && event.split(' ').some(e => e.length > 4 && text.includes(e))) { eventScore = 80; eventMatchLevel = '80% (Syndrome)'; }
   else if (text.includes('adverse') || text.includes('toxicity') || text.includes('reaction')) { eventScore = 40; eventMatchLevel = '40% (System)'; }
+  else if (isAbstractMissing) { eventMatchLevel = '0% (No Abstract)'; eventScore = 0; }
   else { eventMatchLevel = '10% (Broad)'; eventScore = 10; }
   
   // 3. DRUG-EVENT COUPLING (Max 100%)
@@ -391,11 +462,18 @@ export default function App() {
       const data = await response.json();
       const cleanJson = data.result.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsedVerdict = JSON.parse(cleanJson);
-      const query = [
-        parsedVerdict.entities?.drug,
-        parsedVerdict.entities?.adverse_event,
-        inputText.split(/\s+/).slice(0, 12).join(' '),
-      ].filter(Boolean).join(' ');
+      const drug = parsedVerdict.entities?.drug;
+      const event = parsedVerdict.entities?.adverse_event;
+      let query = '';
+      if (drug && event) {
+        query = `("${drug}") AND ("${event}") AND ("case report" OR "patient" OR "developed" OR "after initiation of" OR "adverse drug reaction" OR "drug-induced" OR "patient presented with")`;
+      } else if (drug) {
+        query = `("${drug}") AND ("case report" OR "patient" OR "developed" OR "after initiation of" OR "adverse drug reaction" OR "drug-induced" OR "patient presented with")`;
+      } else if (event) {
+        query = `("${event}") AND ("case report" OR "patient" OR "developed" OR "after initiation of" OR "adverse drug reaction" OR "drug-induced" OR "patient presented with")`;
+      } else {
+        query = inputText.split(/\s+/).slice(0, 12).join(' ');
+      }
       const papersResponse = await fetch(apiUrl(`/search?query=${encodeURIComponent(query)}&limit=120`));
       const papersData = papersResponse.ok ? await papersResponse.json() : { results: [] };
 
@@ -404,7 +482,11 @@ export default function App() {
       setHandledIds([]);
       navigateTo('review');
     } catch (err: any) {
-      const deployHint = API_BASE_URL.includes('127.0.0.1')
+      const isConnectionError = !err.message || 
+                                err.message.includes('fetch') || 
+                                err.message.includes('NetworkError') || 
+                                err.message.includes('Failed to connect to the backend API');
+      const deployHint = (isConnectionError && API_BASE_URL.includes('127.0.0.1'))
         ? ' Backend is still set to localhost. For Vercel, set VITE_API_BASE_URL to your deployed FastAPI URL.'
         : '';
       setErrorMsg(`${err.message || 'An error occurred during analysis'}.${deployHint}`);
