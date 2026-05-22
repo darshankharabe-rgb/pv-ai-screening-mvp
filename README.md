@@ -17,27 +17,18 @@ View your app in AI Studio: https://ai.studio/apps/ea6c0b32-44d0-4690-bacd-91fb7
 3. Run the app:
    `npm run dev`
 
-## Deploy on Vercel
+## Deploy on Vercel (Single Project)
 
-Deploy this as two Vercel projects from the same GitHub repo.
+This project is pre-configured to deploy both the React frontend and the FastAPI backend as **one single Vercel project**. 
 
-### Backend project
+1. **Import the repository** in Vercel.
+2. Keep the **Root Directory** as the repository root (do not select `backend` or `api`).
+3. Vercel will automatically detect the **Vite** framework preset for the frontend.
+4. Add the following **Environment Variables** in the Vercel dashboard:
+   - `GEMINI_API_KEY`: Your Gemini API key.
+5. Click **Deploy**.
 
-1. Import the repo in Vercel.
-2. Set **Root Directory** to `backend`.
-3. Add environment variables:
-   - `GEMINI_API_KEY`: your Gemini key
-   - `ALLOWED_ORIGINS`: your frontend Vercel URL, or `*` while testing
-4. Deploy. The backend exposes:
-   - `GET /`
-   - `GET /search`
-   - `POST /screen`
-
-### Frontend project
-
-1. Import the same repo in Vercel.
-2. Keep **Root Directory** as the repo root.
-3. Framework preset should be **Vite**.
-4. Add environment variable:
-   - `VITE_API_BASE_URL`: the deployed backend URL from the backend project
-5. Deploy or redeploy after setting the variable.
+### How it works:
+- **Frontend**: Built from the root directory using Vite and served statically.
+- **Backend**: Built from the `/api` directory as Python serverless functions.
+- **Routing**: `vercel.json` rewrites all requests matching `/api/*` to `api/index.py`, which maps them to the FastAPI app. Because requests are relative (e.g. `/api/screen`), there is no need to configure CORS or custom API domain variables.
