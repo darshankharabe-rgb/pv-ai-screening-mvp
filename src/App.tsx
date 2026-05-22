@@ -38,6 +38,7 @@ type ScreeningResult = {
     adverse_event?: string;
     drug?: string;
     patient?: string;
+    reporter?: string;
   };
 };
 
@@ -49,6 +50,8 @@ type ReviewPaper = {
   authors: string;
   match: number;
   matchNote: string;
+  relevanceSummary?: string;
+  group?: 'Core Case Reports' | 'Clinical Reviews & Epidemiological Studies' | 'Other Safety Reports';
   abstract: string;
   tags: Array<{ icon: typeof Microscope; label: string }>;
   priority: 'high' | 'medium' | 'low';
@@ -59,6 +62,8 @@ type ReviewPaper = {
   causalityStrength?: 'EXPLICIT' | 'IMPLIED' | 'NONE';
   centrality?: 'CENTRAL' | 'NON-CENTRAL';
   finalDecision?: 'INCLUDE' | 'EXCLUDE';
+  patient?: string;
+  reporter?: string;
 };
 
 type SearchPaper = {
@@ -66,44 +71,12 @@ type SearchPaper = {
   abstract?: string;
   source?: string;
   pmid?: string;
+  authors?: string;
 };
 
 type AppTab = 'search' | 'review' | 'archives';
 
-const fallbackPapers: ReviewPaper[] = [
-  {
-    id: 'fallback-1',
-    title: 'Novel Allosteric Modulation of EGFR in Erlotinib-Resistant Non-Small Cell Lung Cancer Models',
-    journal: 'Journal of Medicinal Chemistry',
-    published: 'Oct 2023',
-    authors: 'Chen, L., Martinez, J., et al.',
-    match: 98,
-    matchNote: 'High structural similarity',
-    abstract:
-      'This study identifies a novel binding pocket adjacent to the ATP-binding site of the epidermal growth factor receptor. Utilizing high-throughput virtual screening followed by X-ray crystallography, the authors report durable kinase inhibition in resistant cell models.',
-    tags: [
-      { icon: Microscope, label: 'In Vitro' },
-      { icon: FileSearch, label: 'Crystallography' },
-    ],
-    priority: 'high',
-  },
-  {
-    id: 'fallback-2',
-    title: 'Computational Assessment of Kinase Selectivity Profiles Using Machine Learning Approaches',
-    journal: 'Nature Chemical Biology',
-    published: 'Sep 2023',
-    authors: 'Gupta, R., Wang, H.',
-    match: 84,
-    matchNote: 'Methodology match',
-    abstract:
-      'A machine learning framework predicts kinome-wide selectivity from limited empirical screening data. Structural fingerprints and thermodynamic metrics are combined to flag off-target interactions across a large panel of human kinases.',
-    tags: [
-      { icon: Database, label: 'In Silico' },
-      { icon: FileText, label: 'Large Dataset' },
-    ],
-    priority: 'medium',
-  },
-];
+const fallbackPapers: ReviewPaper[] = [];
 
 function cleanVerdict(value?: string) {
   if (!value) return 'UNCERTAIN';
@@ -115,11 +88,12 @@ function confidencePercent(result: ScreeningResult | null) {
 }
 
 function buildReviewPapers(result: ScreeningResult | null, inputText: string): ReviewPaper[] {
-  if (!result) return fallbackPapers;
+  if (!result) return [];
 
   const event = result.entities?.adverse_event || 'Safety signal under review';
   const drug = result.entities?.drug || 'Candidate therapy';
   const patient = result.entities?.patient || 'Human patient profile';
+  const reporter = result.entities?.reporter || 'Reporter unavailable';
   const verdict = result.verdict || 'UNCERTAIN';
   const confidence = confidencePercent(result);
   const isRelevant = verdict === 'RELEVANT';
@@ -130,7 +104,9 @@ function buildReviewPapers(result: ScreeningResult | null, inputText: string): R
       title: `${drug}: ${event}`,
       journal: 'AI Screening Result',
       published: 'Current run',
-      authors: patient,
+      authors: reporter,
+      patient: patient,
+      reporter: reporter,
       match: confidence,
       matchNote: isRelevant ? 'Likely ICSR signal' : verdict === 'NOT_RELEVANT' ? 'Low safety relevance' : 'Needs manual review',
       abstract: result.reason || inputText || 'The model returned a screening result without a narrative reason.',
@@ -140,7 +116,6 @@ function buildReviewPapers(result: ScreeningResult | null, inputText: string): R
       ],
       priority: isRelevant ? 'high' : verdict === 'UNCERTAIN' ? 'medium' : 'low',
     },
-    ...fallbackPapers,
   ];
 }
 
@@ -279,17 +254,20 @@ function scorePaper(paper: SearchPaper, index: number, result: ScreeningResult |
   // 7. PENALTY RULES
   let penalties = 0;
   const incidentalKeywords = ['background', 'rarely', 'can cause', 'previously reported'];
-  if (incidentalKeywords.some(kw => text.includes(kw))) penalties += 50;
+  if (incidentalKeywords.some(kw => text.includes(kw))) penalties += 30;
   
-  const reviewKeywords = ['review', 'meta-analysis', 'overview', 'systematic review'];
-  if (reviewKeywords.some(kw => title.includes(kw))) penalties += 40;
+  const reviewKeywords = ['review', 'meta-analysis', 'overview', 'systematic review', 'retrospective'];
+  if (reviewKeywords.some(kw => title.includes(kw))) {
+    // Only penalize reviews slightly to make sure they score high enough to be kept
+    penalties += 10;
+  }
   
   if (drugScore === 0) penalties += 60;
   if (eventScore <= 10) penalties += 50;
   
   // Relaxed penalty: don't heavily penalize missing causality if it's a central known toxicity summary
-  if (causalityStrength === 'NONE' && centrality === 'NON-CENTRAL') penalties += 30;
-  else if (causalityStrength === 'NONE') penalties += 10;
+  if (causalityStrength === 'NONE' && centrality === 'NON-CENTRAL') penalties += 20;
+  else if (causalityStrength === 'NONE') penalties += 5;
   
   // FINAL SCORING LOGIC
   let rawScore = (drugScore * 0.35) + (eventScore * 0.35) + (couplingScore * 0.20) + (causalityScore * 0.10);
@@ -305,9 +283,9 @@ function scorePaper(paper: SearchPaper, index: number, result: ScreeningResult |
   if (failsCouplingAndCentrality || finalScore < 30) {
     confidenceLevel = 'REJECT';
     finalDecision = 'EXCLUDE';
-  } else if (finalScore >= 70 || (couplingStrength === 'STRONG' && centrality === 'CENTRAL')) {
+  } else if (finalScore >= 65 || (couplingStrength === 'STRONG' && centrality === 'CENTRAL')) {
     confidenceLevel = 'HIGH';
-  } else if (finalScore >= 45 || couplingStrength === 'MEDIUM' || couplingStrength === 'STRONG') {
+  } else if (finalScore >= 40 || couplingStrength === 'MEDIUM' || couplingStrength === 'STRONG') {
     confidenceLevel = 'MEDIUM';
   } else {
     confidenceLevel = 'LOW';
@@ -327,6 +305,68 @@ function scorePaper(paper: SearchPaper, index: number, result: ScreeningResult |
   };
 }
 
+function generateRelevanceSummary(paper: SearchPaper, result: ScreeningResult | null, details: any): string {
+  const title = (paper.title || '').toLowerCase();
+  const abstract = (paper.abstract || '').toLowerCase();
+  const text = `${title} ${abstract}`;
+
+  const drug = (result?.entities?.drug || 'the drug').toLowerCase();
+  const event = (result?.entities?.adverse_event || 'the adverse event').toLowerCase();
+
+  const isElderly = text.includes('65') || text.includes('elderly') || text.includes('aged') || text.includes('older') || text.includes('senile') || text.includes('geriatric') || text.includes('65-year-old') || text.includes('years old');
+  const isCaseReport = title.includes('case report') || title.includes('case series') || title.includes('case study') || text.includes('developed') || text.includes('patient presented') || text.includes('we report') || text.includes('a 65-year-old') || text.includes('years old');
+  const isEpidemiological = title.includes('epidemiol') || text.includes('cohort') || text.includes('prospective') || text.includes('observational') || text.includes('incidence') || text.includes('prevalence') || text.includes('risk factor') || text.includes('population-based');
+  const isReview = title.includes('review') || title.includes('meta-analysis') || title.includes('systematic');
+
+  let explanation = '';
+
+  if (isCaseReport) {
+    explanation = `Useful for causality assessment as a direct case report of ${event} associated with ${drug}.`;
+    if (isElderly) {
+      explanation = `Useful for causality assessment, describing a case of ${event} in an elderly patient taking ${drug}.`;
+    }
+  } else if (isEpidemiological) {
+    explanation = `Provides prospective/epidemiological evidence concerning the risk factors and incidence of ${event} associated with ${drug}.`;
+    if (isElderly) {
+      explanation = `Provides epidemiological/cohort evidence describing demographic-specific risk of ${event} in patients aged 65+.`;
+    }
+  } else if (isReview) {
+    explanation = `Clinical review summarizing the safety profile, risk factors, and mechanisms of ${event} secondary to ${drug}.`;
+    if (isElderly) {
+      explanation = `Clinical review summarizing age-related risk factors and safety profiles for ${event} induced by ${drug}.`;
+    }
+  } else {
+    if (details.confidenceLevel === 'HIGH') {
+      explanation = `Highly relevant safety signal showing strong coupling between ${drug} exposure and ${event} event.`;
+    } else if (details.confidenceLevel === 'MEDIUM') {
+      explanation = `Probable safety signal showing moderate coupling between ${drug} exposure and ${event}.`;
+    } else {
+      explanation = `Discusses ${drug} or ${event} with low or incidental association to the primary safety review.`;
+    }
+  }
+
+  return explanation.charAt(0).toUpperCase() + explanation.slice(1);
+}
+
+function getPaperGroup(paper: SearchPaper, details: any): 'Core Case Reports' | 'Clinical Reviews & Epidemiological Studies' | 'Other Safety Reports' {
+  const title = (paper.title || '').toLowerCase();
+  const abstract = (paper.abstract || '').toLowerCase();
+  const text = `${title} ${abstract}`;
+
+  const isReview = title.includes('review') || title.includes('meta-analysis') || title.includes('systematic') || title.includes('retrospective review') || abstract.includes('literature review');
+  const isEpidemiological = title.includes('epidemiol') || text.includes('cohort') || text.includes('prospective') || text.includes('observational') || text.includes('incidence') || text.includes('prevalence') || text.includes('risk factor') || text.includes('population-based') || text.includes('controlled trial') || text.includes('multicenter');
+  
+  const isCaseReport = title.includes('case report') || title.includes('case series') || title.includes('case study') || text.includes('a 65-year-old') || text.includes('years old') || text.includes('developed') || text.includes('patient presented') || text.includes('we report') || text.includes('patient developed');
+
+  if (isCaseReport && !isReview) {
+    return 'Core Case Reports';
+  } else if (isReview || isEpidemiological) {
+    return 'Clinical Reviews & Epidemiological Studies';
+  } else {
+    return 'Other Safety Reports';
+  }
+}
+
 function mapSearchPapers(papers: SearchPaper[], result: ScreeningResult | null, inputText: string): ReviewPaper[] {
   return papers
     .map((paper, index) => {
@@ -336,15 +376,20 @@ function mapSearchPapers(papers: SearchPaper[], result: ScreeningResult | null, 
         : details.confidenceLevel === 'MEDIUM' ? 'Probable safety signal'
         : details.confidenceLevel === 'LOW' ? 'Incidental or background mention'
         : 'Rejected / Excluded';
+
+      const group = getPaperGroup(paper, details);
+      const relevanceSummary = generateRelevanceSummary(paper, result, details);
       
       return {
         id: paper.pmid || `paper-${index}`,
         title: paper.title || 'Untitled paper',
         journal: paper.source || 'Europe PMC',
         published: 'Indexed result',
-        authors: paper.pmid ? `PMID: ${paper.pmid}` : 'Metadata unavailable',
+        authors: paper.authors || (paper.pmid ? `PMID: ${paper.pmid}` : 'Metadata unavailable'),
         match: details.score,
         matchNote,
+        relevanceSummary,
+        group,
         abstract: paper.abstract || 'No abstract available.',
         tags: [
           { icon: ShieldCheck, label: details.finalDecision },
@@ -396,6 +441,18 @@ export default function App() {
     () => reviewPapers.filter((paper) => !handledIds.includes(paper.id) && !archivedPapers.some((archived) => archived.id === paper.id)),
     [archivedPapers, handledIds, reviewPapers],
   );
+  const coreCaseReports = useMemo(
+    () => queuedPapers.filter((paper) => paper.group === 'Core Case Reports'),
+    [queuedPapers],
+  );
+  const clinicalReviews = useMemo(
+    () => queuedPapers.filter((paper) => paper.group === 'Clinical Reviews & Epidemiological Studies'),
+    [queuedPapers],
+  );
+  const otherReports = useMemo(
+    () => queuedPapers.filter((paper) => paper.group === 'Other Safety Reports' || !paper.group),
+    [queuedPapers],
+  );
   const topScore = queuedPapers[0]?.match ?? 0;
 
   useEffect(() => {
@@ -436,6 +493,100 @@ export default function App() {
     setHandledIds((ids) => ids.filter((id) => id !== paper.id));
     setSearchPapers((papers) => papers.some((item) => item.id === paper.id) ? papers : [paper, ...papers].sort((a, b) => b.match - a.match));
     navigateTo('review');
+  };
+
+  const renderPaperCard = (paper: ReviewPaper) => {
+    return (
+      <article
+        key={paper.id}
+        className="bg-surface-container-lowest border border-outline-variant p-4 flex flex-col gap-3 hover:bg-surface-bright transition-colors rounded-lg"
+      >
+        <div className="flex flex-col gap-3 xl:flex-row xl:justify-between xl:items-start">
+          <div className="min-w-0 flex-1">
+            <h3 className="headline-md mb-1 leading-tight font-semibold text-on-surface">
+              {paper.id.match(/^\d+$/) ? (
+                <a href={`https://pubmed.ncbi.nlm.nih.gov/${paper.id}/`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                  {paper.title}
+                </a>
+              ) : (
+                <span>{paper.title}</span>
+              )}
+            </h3>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2">
+              <span className="label-md text-primary">{paper.journal}</span>
+              <span className="body-sm text-on-surface-variant">Published: {paper.published}</span>
+              {paper.journal === 'AI Screening Result' ? (
+                <>
+                  {paper.patient && <span className="body-sm text-on-surface-variant">Patient: {paper.patient}</span>}
+                  {paper.reporter && <span className="body-sm text-on-surface-variant">Reporter: {paper.reporter}</span>}
+                </>
+              ) : (
+                <span className="body-sm text-on-surface-variant">Authors: {paper.authors}</span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex xl:flex-col items-start xl:items-end gap-2 shrink-0">
+            <div
+              className={`border label-md px-3 py-1.5 rounded flex items-center gap-1.5 ${
+                paper.priority === 'high'
+                  ? 'bg-secondary-container text-on-secondary-container border-secondary'
+                  : 'bg-surface-container-high text-on-surface border-outline-variant'
+              }`}
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+              {paper.match}% Match
+            </div>
+            <span className="body-sm text-on-surface-variant font-medium">{paper.matchNote}</span>
+          </div>
+        </div>
+
+        {(paper.confidenceLevel || paper.drugMatchLevel) && (
+          <div className="bg-surface-container py-2 px-3 rounded text-xs flex flex-wrap gap-x-4 gap-y-2 mt-1 mb-2 border border-outline-variant">
+            <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Confidence:</span> <span className={paper.confidenceLevel === 'HIGH' ? 'text-primary font-bold' : paper.confidenceLevel === 'REJECT' ? 'text-[#ba1a1a] font-bold' : 'text-on-surface'}>{paper.confidenceLevel}</span></div>
+            <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Drug Match:</span> <span className="text-on-surface">{paper.drugMatchLevel}</span></div>
+            <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Event Match:</span> <span className="text-on-surface">{paper.eventMatchLevel}</span></div>
+            <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Coupling:</span> <span className="text-on-surface">{paper.couplingStrength}</span></div>
+            <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Causality:</span> <span className="text-on-surface">{paper.causalityStrength}</span></div>
+            <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Centrality:</span> <span className="text-on-surface">{paper.centrality}</span></div>
+            <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Decision:</span> <span className={paper.finalDecision === 'INCLUDE' ? 'text-[#146c2e] font-bold' : 'text-[#ba1a1a] font-bold'}>{paper.finalDecision}</span></div>
+          </div>
+        )}
+
+        {paper.relevanceSummary && (
+          <div className="bg-surface-container-low px-3 py-2.5 rounded border-l-4 border-primary body-md text-on-surface mt-1 mb-2">
+            <span className="font-semibold text-primary">Relevance:</span> {paper.relevanceSummary}
+          </div>
+        )}
+
+        <p className="body-md text-on-surface-variant line-clamp-3">{paper.abstract}</p>
+
+        <div className="flex flex-col gap-3 md:flex-row md:justify-between md:items-center mt-1 pt-3 border-t border-surface-container-highest">
+          <div className="flex flex-wrap gap-2">
+            {paper.tags.map((tag) => (
+              <span
+                key={`${paper.id}-${tag.label}`}
+                className="inline-flex items-center gap-1.5 bg-surface text-on-surface-variant code-md px-2 py-1 border border-outline-variant rounded"
+              >
+                <tag.icon className="w-3.5 h-3.5" />
+                {tag.label}
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => completePaper(paper, 'archive')} className="w-10 h-10 flex items-center justify-center border border-outline-variant rounded text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface transition-colors" title="Archive for later">
+              <Folder className="w-4 h-4" />
+            </button>
+            <button onClick={() => completePaper(paper, 'reject')} className="w-10 h-10 flex items-center justify-center border border-[#ba1a1a] text-[#ba1a1a] rounded hover:bg-[#ffdad6] hover:text-[#93000a] transition-colors" title="Reject as irrelevant">
+              <X className="w-4 h-4" />
+            </button>
+            <button onClick={() => completePaper(paper, 'accept')} className="w-10 h-10 flex items-center justify-center bg-secondary text-on-secondary rounded hover:bg-on-secondary-container transition-colors shadow-sm" title="Accept and extract data">
+              <Check className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </article>
+    );
   };
 
   const handleAnalyze = async () => {
@@ -657,7 +808,17 @@ export default function App() {
                     <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                       <div>
                         <h3 className="headline-md text-on-surface">{paper.title}</h3>
-                        <p className="body-sm text-on-surface-variant">{paper.journal} · {paper.authors}</p>
+                        <p className="body-sm text-on-surface-variant">
+                          {paper.journal}
+                          {paper.journal === 'AI Screening Result' ? (
+                            <>
+                              {paper.patient && ` · Patient: ${paper.patient}`}
+                              {paper.reporter && ` · Reporter: ${paper.reporter}`}
+                            </>
+                          ) : (
+                            ` · Authors: ${paper.authors}`
+                          )}
+                        </p>
                       </div>
                       <span className="bg-surface-container-high text-on-surface border border-outline-variant label-md px-3 py-1.5 rounded">{paper.match}% Match</span>
                     </div>
@@ -745,89 +906,58 @@ export default function App() {
                   </div>
                 )}
 
-                <div className="flex flex-col gap-4">
-                  {queuedPapers.map((paper) => (
-                    <article
-                      key={paper.id}
-                      className="bg-surface-container-lowest border border-outline-variant p-4 flex flex-col gap-3 hover:bg-surface-bright transition-colors"
-                    >
-                      <div className="flex flex-col gap-3 xl:flex-row xl:justify-between xl:items-start">
-                        <div className="min-w-0 flex-1">
-                          <h3 className="headline-md mb-1 leading-tight">
-                            {paper.id.match(/^\d+$/) ? (
-                              <a href={`https://pubmed.ncbi.nlm.nih.gov/${paper.id}/`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                                {paper.title}
-                              </a>
-                            ) : (
-                              <span className="text-on-surface">{paper.title}</span>
-                            )}
-                          </h3>
-                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2">
-                            <span className="label-md text-primary">{paper.journal}</span>
-                            <span className="body-sm text-on-surface-variant">Published: {paper.published}</span>
-                            <span className="body-sm text-on-surface-variant">Authors: {paper.authors}</span>
-                          </div>
-                        </div>
-
-                        <div className="flex xl:flex-col items-start xl:items-end gap-2 shrink-0">
-                          <div
-                            className={`border label-md px-3 py-1.5 rounded flex items-center gap-1.5 ${
-                              paper.priority === 'high'
-                                ? 'bg-secondary-container text-on-secondary-container border-secondary'
-                                : 'bg-surface-container-high text-on-surface border-outline-variant'
-                            }`}
-                          >
-                            <SlidersHorizontal className="w-4 h-4" />
-                            {paper.match}% Match
-                          </div>
-                          <span className="body-sm text-on-surface-variant">{paper.matchNote}</span>
-                        </div>
-                      </div>
-
-                      {(paper.confidenceLevel || paper.drugMatchLevel) && (
-                        <div className="bg-surface-container py-2 px-3 rounded text-xs flex flex-wrap gap-x-4 gap-y-2 mt-1 mb-2 border border-outline-variant">
-                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Confidence:</span> <span className={paper.confidenceLevel === 'HIGH' ? 'text-primary font-bold' : paper.confidenceLevel === 'REJECT' ? 'text-[#ba1a1a] font-bold' : 'text-on-surface'}>{paper.confidenceLevel}</span></div>
-                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Drug Match:</span> <span className="text-on-surface">{paper.drugMatchLevel}</span></div>
-                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Event Match:</span> <span className="text-on-surface">{paper.eventMatchLevel}</span></div>
-                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Coupling:</span> <span className="text-on-surface">{paper.couplingStrength}</span></div>
-                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Causality:</span> <span className="text-on-surface">{paper.causalityStrength}</span></div>
-                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Centrality:</span> <span className="text-on-surface">{paper.centrality}</span></div>
-                          <div className="flex flex-col"><span className="text-on-surface-variant font-medium">Decision:</span> <span className={paper.finalDecision === 'INCLUDE' ? 'text-[#146c2e] font-bold' : 'text-[#ba1a1a] font-bold'}>{paper.finalDecision}</span></div>
-                        </div>
-                      )}
-
-                      <p className="body-md text-on-surface-variant line-clamp-3">{paper.abstract}</p>
-
-                      <div className="flex flex-col gap-3 md:flex-row md:justify-between md:items-center mt-1 pt-3 border-t border-surface-container-highest">
-                        <div className="flex flex-wrap gap-2">
-                          {paper.tags.map((tag) => (
-                            <span
-                              key={`${paper.id}-${tag.label}`}
-                              className="inline-flex items-center gap-1.5 bg-surface text-on-surface-variant code-md px-2 py-1 border border-outline-variant rounded"
-                            >
-                              <tag.icon className="w-3.5 h-3.5" />
-                              {tag.label}
-                            </span>
-                          ))}
-                        </div>
-                        <div className="flex gap-2">
-                          <button onClick={() => completePaper(paper, 'archive')} className="w-10 h-10 flex items-center justify-center border border-outline-variant rounded text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface transition-colors" title="Archive for later">
-                            <Folder className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => completePaper(paper, 'reject')} className="w-10 h-10 flex items-center justify-center border border-[#ba1a1a] text-[#ba1a1a] rounded hover:bg-[#ffdad6] hover:text-[#93000a] transition-colors" title="Reject as irrelevant">
-                            <X className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => completePaper(paper, 'accept')} className="w-10 h-10 flex items-center justify-center bg-secondary text-on-secondary rounded hover:bg-on-secondary-container transition-colors shadow-sm" title="Accept and extract data">
-                            <Check className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  ))}
-                  {queuedPapers.length === 0 && (
+                <div className="flex flex-col gap-6">
+                  {queuedPapers.length === 0 ? (
                     <div className="bg-surface-container-lowest border border-outline-variant p-8 text-center rounded">
                       <p className="headline-md text-on-surface mb-1">Review queue cleared</p>
                       <p className="body-md text-on-surface-variant">Accepted, rejected, or archived papers are no longer in the active queue.</p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-8">
+                      {/* Core Case Reports Group */}
+                      {coreCaseReports.length > 0 && (
+                        <div className="flex flex-col gap-4">
+                          <div className="flex items-center gap-2.5 mt-2 mb-1 pb-1 border-b border-outline-variant">
+                            <h3 className="headline-md text-on-surface font-semibold">Core Case Reports</h3>
+                            <span className="bg-primary text-on-primary text-xs px-2.5 py-0.5 rounded-full font-semibold">
+                              {coreCaseReports.length}
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-4">
+                            {coreCaseReports.map(renderPaperCard)}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Clinical Reviews & Epidemiological Studies Group */}
+                      {clinicalReviews.length > 0 && (
+                        <div className="flex flex-col gap-4">
+                          <div className="flex items-center gap-2.5 mt-2 mb-1 pb-1 border-b border-outline-variant">
+                            <h3 className="headline-md text-on-surface font-semibold">Clinical Reviews & Epidemiological Studies</h3>
+                            <span className="bg-primary text-on-primary text-xs px-2.5 py-0.5 rounded-full font-semibold">
+                              {clinicalReviews.length}
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-4">
+                            {clinicalReviews.map(renderPaperCard)}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Other Safety Reports Group */}
+                      {otherReports.length > 0 && (
+                        <div className="flex flex-col gap-4">
+                          <div className="flex items-center gap-2.5 mt-2 mb-1 pb-1 border-b border-outline-variant">
+                            <h3 className="headline-md text-on-surface font-semibold">Other Safety Reports</h3>
+                            <span className="bg-primary text-on-primary text-xs px-2.5 py-0.5 rounded-full font-semibold">
+                              {otherReports.length}
+                            </span>
+                          </div>
+                          <div className="flex flex-col gap-4">
+                            {otherReports.map(renderPaperCard)}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

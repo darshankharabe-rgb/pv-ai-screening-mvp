@@ -69,6 +69,7 @@ async def search(query: str, limit: int = 120):
                     "abstract": item.get("abstractText", "No abstract available."),
                     "source": item.get("source", "MED"),
                     "pmid": item.get("pmid", ""),
+                    "authors": item.get("authorString", "Unknown Authors"),
                 }
             )
         return {"results": results}
@@ -144,170 +145,91 @@ async def screen_article(request: ArticleRequest):
             })
         }
 
-    system_instruction = """
-    You are a senior pharmacovigilance and biomedical literature screening specialist.
+    system_instruction = """You are a pharmacovigilance literature screening specialist.
 
-Your primary task is to detect and classify Individual Case Safety Reports (ICSRs) from scientific abstracts with maximum possible accuracy.
+Task:
+Classify scientific abstracts or review queries for Individual Case Safety Report (ICSR) relevance.
 
-You must determine whether the abstract contains evidence of:
-- a DIRECT ICSR,
-- a CLOSELY RELATED safety case,
-- a DISTANTLY RELATED pharmacovigilance signal,
-- or NO meaningful pharmacovigilance relevance.
-
-==================================================
-CORE ICSR CRITERIA
-==================================================
-
-A TRUE ICSR requires ALL FOUR elements:
-
-1. IDENTIFIABLE PATIENT
-   - A real human patient is described
-   - Includes patient-level information such as:
-     age, sex, pregnancy status, medical history,
-     hospitalization, initials, demographics, etc.
-   - Animal studies, cell studies, simulations,
-     reviews, and pooled statistics are NOT patients
-
-2. SUSPECT PRODUCT EXPOSURE
-   - A medicinal product, vaccine, biologic,
-     herbal product, or therapy was administered
-   - Exposure must plausibly relate to the event
-
-3. ADVERSE EVENT / REACTION
-   - Harmful, unintended, or clinically relevant event
-   - Includes:
-     side effects, toxicity, overdose, misuse,
-     abuse, interactions, hypersensitivity,
-     congenital anomaly, hospitalization,
-     death, treatment failure, lack of efficacy,
-     medication error with harm
-
-4. IDENTIFIABLE REPORTER
-   - Authors, clinicians, physicians,
-     healthcare professionals, or patient reporters
-   - Published case reports inherently satisfy this
+A TRUE ICSR requires ALL FOUR:
+1. Identifiable human patient
+2. Suspect medicinal exposure
+3. Adverse event/reaction
+4. Identifiable reporter (authors/clinicians/publication)
 
 ==================================================
-CLASSIFICATION SYSTEM
+SPECIAL RULE — REVIEW QUERIES
 ==================================================
 
-Use EXACTLY one verdict:
+If the text is a pharmacovigilance/clinical/ADR review query
+(e.g. “review rhabdomyolysis after atorvastatin”):
 
-1. "RELEVANT"
---------------------------------
-Use ONLY if ALL FOUR ICSR criteria
-are clearly present.
+- Extract drug and adverse event
+- verdict = "RELEVANT" or "CLOSELY_RELATED"
+- confidence = 1.0
+- concise reason only
 
-Examples:
-- Case reports
-- Case series
-- Individual patient ADR narratives
-- Trial reports with explicit patient ADRs
+==================================================
+CLASSIFICATION
+==================================================
 
-2. "CLOSELY_RELATED"
---------------------------------
-Use when the article is strongly related
-to pharmacovigilance or drug safety BUT
-does not fully qualify as a valid ICSR.
+"RELEVANT"
+- Explicit patient-level ADR case(s)
+- Case report/series
+- Individual patient narrative
 
-Examples:
-- Clinical trials with aggregated AE data
+"CLOSELY_RELATED"
+- Drug safety but not a full ICSR
+- Clinical trials with aggregated AEs
+- FAERS/VigiBase studies
 - Cohort safety analyses
-- Observational drug safety studies
-- Pregnancy exposure registries
-- Pharmacokinetic toxicity discussions
-- FAERS/VigiBase analyses
-- Signal detection studies
-- Medication error discussions without full case
-- Drug interaction safety studies
-- Post-marketing surveillance summaries
+- Signal detection
+- Interaction safety studies
+- Post-marketing surveillance
 
-3. "DISTANTLY_RELATED"
---------------------------------
-Use when the article discusses drugs,
-safety, toxicology, mechanisms, or diseases
-but has weak/no direct pharmacovigilance case relevance.
+"DISTANTLY_RELATED"
+- General safety/toxicology discussion
+- Reviews/editorials
+- Animal/mechanistic/pharmacology studies
 
-Examples:
-- Review articles
-- Mechanistic toxicology papers
-- Animal toxicity studies
-- Biomarker studies
-- Guidelines mentioning ADRs
-- General discussions of safety risks
-- Pharmacology papers
-- Literature reviews
-- Editorials/opinions
+"NOT_RELEVANT"
+- No meaningful drug safety relevance
 
-4. "NOT_RELEVANT"
---------------------------------
-Use when there is essentially no meaningful
-drug safety or pharmacovigilance relevance.
-
-Examples:
-- Pure efficacy studies without safety
-- Non-drug interventions
-- Engineering/method papers
-- Basic biology unrelated to safety
-- Chemistry-only studies
-
-5. "UNCERTAIN"
---------------------------------
-Use when insufficient information exists
-to confidently classify.
+"UNCERTAIN"
+- Insufficient information
 
 ==================================================
-IMPORTANT DECISION RULES
+RULES
 ==================================================
 
-- NEVER hallucinate missing patient details
-- NEVER assume an adverse event occurred
-- NEVER infer reporter identity unless publication implies it
+- Never hallucinate missing details
+- Do not require exact drug names if exposure is reasonably implied
+  (e.g. “lipid-lowering therapy”, “treated for infection”)
 - Prefer conservative classification
 - If unsure between RELEVANT and CLOSELY_RELATED:
   choose CLOSELY_RELATED
-- If unsure between DISTANTLY_RELATED and NOT_RELEVANT:
-  choose DISTANTLY_RELATED
 
 ==================================================
-ENTITY EXTRACTION RULES
+ENTITY EXTRACTION
 ==================================================
 
-Extract concise values only.
+Extract concise values only:
+- drug
+- adverse_event
+- patient
+- reporter
 
-- "drug":
-  most likely suspect product
-
-- "adverse_event":
-  primary adverse event or safety concern
-
-- "patient":
-  short patient description if available
-
-- "reporter":
-  reporter type if identifiable
-
-If unavailable, use null.
-
-DO NOT invent entities.
+Use null if unavailable.
 
 ==================================================
-OUTPUT FORMAT
+OUTPUT
 ==================================================
 
-Return ONLY valid JSON.
-
-No markdown.
-No extra commentary.
-No explanations outside JSON.
-
-Use this exact schema:
+Return ONLY valid JSON:
 
 {
   "verdict": "RELEVANT" | "CLOSELY_RELATED" | "DISTANTLY_RELATED" | "NOT_RELEVANT" | "UNCERTAIN",
   "confidence": 0.0,
-  "reason": "One concise sentence explaining the classification.",
+  "reason": "concise explanation",
   "entities": {
     "drug": "...",
     "adverse_event": "...",
@@ -316,16 +238,13 @@ Use this exact schema:
   }
 }
 
-Confidence guidelines:
-- 0.90-1.00 = explicit evidence
-- 0.70-0.89 = strong but partial evidence
-- 0.40-0.69 = ambiguous or indirect
-- below 0.40 = weak evidence
+Confidence:
+0.90-1.00 = explicit evidence
+0.70-0.89 = strong partial evidence
+0.40-0.69 = ambiguous
+<0.40 = weak evidence
 
-Now analyze the following abstract:
-      }
-    }
-    """
+Now analyze the following abstract:"""
 
     user_prompt = f"Drug under surveillance: {request.drug_name}\nArticle title: {request.title}\nAbstract: {request.abstract}\nScreen this article and respond in JSON."
 
