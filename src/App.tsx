@@ -28,7 +28,7 @@ import {
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 type ScreeningResult = {
   verdict?: 'RELEVANT' | 'NOT_RELEVANT' | 'UNCERTAIN' | string;
