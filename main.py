@@ -51,6 +51,7 @@ async def search(query: str, limit: int = 5):
                 "abstract": item.get('abstractText', 'No abstract available.'),
                 "source": item.get('source', 'MED'),
                 "pmid": item.get('pmid', ''),
+                "authors": item.get('authorString', 'Unknown Authors'),
             })
         return {"results": results}
     except Exception as e:
@@ -125,27 +126,106 @@ async def screen_article(request: ArticleRequest):
             })
         }
 
-    system_instruction = """
-    You are an expert pharmacovigilance specialist. Your task is to screen scientific literature abstracts to identify Individual Case Safety Reports (ICSRs) - articles that describe an adverse drug reaction experienced by a real human patient.
-    An article is RELEVANT if it contains ALL FOUR of:
-    1. An identifiable patient (human, any age)
-    2. Exposure to the suspect drug
-    3. An adverse event or suspected adverse reaction
-    4. A reporter (author, physician, or patient themselves)
-    
-    Respond ONLY with valid JSON in this exact format:
-    {
-      "verdict": "RELEVANT" | "NOT_RELEVANT" | "UNCERTAIN",
-      "confidence": 0.0-1.0,
-      "reason": "one sentence plain English",
-      "entities": {
-        "drug": "...",
-        "adverse_event": "...",
-        "patient": "...",
-        "reporter": "..."
-      }
-    }
-    """
+    system_instruction = """You are a pharmacovigilance literature screening specialist.
+
+Task:
+Classify scientific abstracts or review queries for Individual Case Safety Report (ICSR) relevance.
+
+A TRUE ICSR requires ALL FOUR:
+1. Identifiable human patient
+2. Suspect medicinal exposure
+3. Adverse event/reaction
+4. Identifiable reporter (authors/clinicians/publication)
+
+==================================================
+SPECIAL RULE — REVIEW QUERIES
+==================================================
+
+If the text is a pharmacovigilance/clinical/ADR review query
+(e.g. “review rhabdomyolysis after atorvastatin”):
+
+- Extract drug and adverse event
+- verdict = "RELEVANT" or "CLOSELY_RELATED"
+- confidence = 1.0
+- concise reason only
+
+==================================================
+CLASSIFICATION
+==================================================
+
+"RELEVANT"
+- Explicit patient-level ADR case(s)
+- Case report/series
+- Individual patient narrative
+
+"CLOSELY_RELATED"
+- Drug safety but not a full ICSR
+- Clinical trials with aggregated AEs
+- FAERS/VigiBase studies
+- Cohort safety analyses
+- Signal detection
+- Interaction safety studies
+- Post-marketing surveillance
+
+"DISTANTLY_RELATED"
+- General safety/toxicology discussion
+- Reviews/editorials
+- Animal/mechanistic/pharmacology studies
+
+"NOT_RELEVANT"
+- No meaningful drug safety relevance
+
+"UNCERTAIN"
+- Insufficient information
+
+==================================================
+RULES
+==================================================
+
+- Never hallucinate missing details
+- Do not require exact drug names if exposure is reasonably implied
+  (e.g. “lipid-lowering therapy”, “treated for infection”)
+- Prefer conservative classification
+- If unsure between RELEVANT and CLOSELY_RELATED:
+  choose CLOSELY_RELATED
+
+==================================================
+ENTITY EXTRACTION
+==================================================
+
+Extract concise values only:
+- drug
+- adverse_event
+- patient
+- reporter
+
+Use null if unavailable.
+
+==================================================
+OUTPUT
+==================================================
+
+Return ONLY valid JSON:
+
+{
+  "verdict": "RELEVANT" | "CLOSELY_RELATED" | "DISTANTLY_RELATED" | "NOT_RELEVANT" | "UNCERTAIN",
+  "confidence": 0.0,
+  "reason": "concise explanation",
+  "entities": {
+    "drug": "...",
+    "adverse_event": "...",
+    "patient": "...",
+    "reporter": "..."
+  }
+}
+
+Confidence:
+0.90-1.00 = explicit evidence
+0.70-0.89 = strong partial evidence
+0.40-0.69 = ambiguous
+<0.40 = weak evidence
+
+Now analyze the following abstract:"""
     
     user_prompt = f"Drug under surveillance: {request.drug_name}\nArticle title: {request.title}\nAbstract: {request.abstract}\nScreen this article and respond in JSON."
     
