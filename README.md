@@ -1,6 +1,6 @@
 
 
-# Run and deploy your app
+# Run and the app
 
 This contains everything you need to run your app locally.
 
